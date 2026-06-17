@@ -469,7 +469,7 @@ func (m *ImageManager) ListDevices(ctx context.Context) ([]DeviceInfo, error)
   - tar.zstd → 使用 `archive/tar` 遍历文件系统，用 `github.com/klauspost/compress/zstd` 压缩流式写入
 - `Restore`：同 Capture，逆操作
 - 分卷：TBI 内置支持；Raw 按大小分割 .img.001/.img.002…；tar.zstd 流式可分割
-- 密码加密：TBI 部分版本支持；tar.zstd 不支持内置加密
+
 - 压缩等级：tar.zstd 对应 zstd 压缩级别 0~19
 - 修复引导：跨平台实现
   - Windows → `bcdboot` / `bootrec`
@@ -684,7 +684,7 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 
 运行后验证：
 1. 启动 → 主菜单显示（创建系统镜像 / 创建系统配置 / 还原系统配置 / 还原系统镜像 + 退出）
-2. 选"创建系统镜像" → 进入 7 步向导（选类型→压缩→分卷→描述→密码→选源盘→确认）
+2. 选"创建系统镜像" → 进入 6 步向导（选类型→压缩→分卷→描述→选源盘→确认）
 3. 选"还原系统镜像" → 进入 5 步向导（选文件→显示信息→选目标盘→修复引导→确认）
 4. 进度页 → 实时显示进度、速度、用时
 5. 完成页 → 显示结果汇总
@@ -696,7 +696,7 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 ### 10.1 设计原则
 - 全终端界面（TUI），无 GUI 窗口
 - 键盘全操作：↑↓ 导航，数字键选择，Enter 确认，Esc 返回
-- 输入框场景：自由文本输入（描述、密码、路径等）
+- 输入框场景：自由文本输入（描述、路径等）
 - 每个页面顶部固定标题，底部固定操作提示
 - 返回上级统一用选项 `0`，放在所有菜单列表**最顶上**
 - 所有选择项用单数字键触发（1、2、3…），不使用多键组合
@@ -713,7 +713,6 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 │       ├── 选择压缩等级 (各工具映射)
 │       ├── 是否启用分卷/差分? [Y/n]
 │       ├── 输入描述 (可选): 自由文本
-│       ├── 输入密码 (可选): 隐藏输入
 │       ├── 选择源磁盘/分区
 │       ├── 输入保存路径: 自由文本/浏览
 │       ├── 确认页: 显示所有参数的摘要
@@ -741,8 +740,7 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 │
 └── 4. 还原系统镜像
         ├── 选择镜像文件 (输入路径或浏览)
-        ├── 显示镜像信息 (类型/大小/描述/创建时间/是否有密码)
-        ├── [如果带密码] 输入密码
+        ├── 显示镜像信息 (类型/大小/描述/创建时间)
         ├── 选择目标磁盘/分区
         │    └── 列出所有可用磁盘 (列表选择)
         ├── 是否修复引导分区?
@@ -834,18 +832,11 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
   差分仅 TBI 支持。tar.zstd 天然流式追加。RAW 不推荐差分。
 ```
 
-#### 10.4.4 描述 & 密码
+#### 10.4.4 描述
 
 ```
-  输入描述 (可选，Enter跳过):
-  > Windows 10 Pro 22H2 完整工作站配置
-
-  输入密码 (可选，Enter跳过，输入显示为 *****):
-  > ******
-
-  确认密码:
-  > ******
-  ✓ 密码一致
+   输入描述 (可选，Enter跳过):
+   > Windows 10 Pro 22H2 完整工作站配置
 ```
 
 #### 10.4.5 选择源磁盘
@@ -890,7 +881,7 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 ║  分卷:        是 (>4GB 自动分割)          ║
 ║  差分:        否                          ║
 ║  描述:        Arch Linux 工作站           ║
-║  密码:        未设置                      ║
+
 ║                                          ║
 ║  1. 确认开始                              ║
 ║  0. 返回修改                              ║
@@ -925,22 +916,13 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 ║            完整开发环境 + Docker 数据      ║
 ║  大小:      8.3 GB                       ║
 ║  创建时间:  2024-08-15 14:30:22          ║
-║  加密:      是 (已设置密码)               ║
+║  加密:      否                            ║
 ║                                          ║
 ║  Enter继续  |  0. 返回选择                ║
 ╚══════════════════════════════════════════╝
 ```
 
-#### 10.5.3 [如果加密] 输入密码
-
-```
-  此镜像已加密，请输入密码:
-  > ******
-
-  Enter确认  |  0. 返回
-```
-
-#### 10.5.4 选择目标磁盘
+#### 10.5.3 选择目标磁盘
 
 ```
   选择还原目标位置:
@@ -1292,7 +1274,6 @@ Enter → 确认恢复项 → 并行执行 → 进度页 → 结果汇总
 |------|------|
 | 菜单页 | 按数字键选择，Enter 无效 |
 | 输入框 | 自由文本输入，Enter 提交，Esc 取消 |
-| 密码框 | 输入显示 `*`，两次确认一致性 |
 | 确认页 | 1=确认，0=返回，其他键无反应 |
 | 进度页 | 实时刷新，Esc 可取消 |
 | 错误页 | 显示错误信息，Enter 返回 |
@@ -1317,7 +1298,6 @@ cmd/echo/
 │   │   ├── compression.go   # 选择压缩等级
 │   │   ├── features.go      # 分卷/差分选择
 │   │   ├── description.go   # 输入描述
-│   │   ├── password.go      # 输入密码
 │   │   ├── source_disk.go   # 选择源磁盘
 │   │   ├── save_path.go     # 输入保存路径
 │   │   └── confirm.go       # 确认页
@@ -1325,7 +1305,6 @@ cmd/echo/
 │   ├── image_restore/
 │   │   ├── select_file.go   # 选择镜像文件
 │   │   ├── show_info.go     # 显示镜像信息
-│   │   ├── password.go      # 输入密码(加密镜像)
 │   │   ├── target_disk.go   # 选择目标磁盘
 │   │   ├── boot_repair.go   # 修复引导选项+说明
 │   │   └── confirm.go       # 确认还原

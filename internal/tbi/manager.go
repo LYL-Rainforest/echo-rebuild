@@ -57,8 +57,7 @@ type ImageInfo struct {
 	Description string    `json:"description"`
 	SizeBytes   int64     `json:"size_bytes"`
 	CreatedAt   time.Time `json:"created_at"`
-	HasPassword bool      `json:"has_password"`
-	IsSplit     bool      `json:"is_split"`
+	IsSplit bool `json:"is_split"`
 }
 
 type DeviceInfo struct {
