@@ -1,0 +1,14 @@
+# Build
+build/
+*.exe
+
+# Database
+*.db
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store
