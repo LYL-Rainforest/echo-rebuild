@@ -29,7 +29,6 @@ func (e AppEntry) Validate() error {
 type EntryCategory string
 
 const (
-	CatSoftware   EntryCategory = "software"
-	CatSystem     EntryCategory = "system"
-	CatDriver     EntryCategory = "driver"
+	CatSoftware EntryCategory = "software"
+	CatSystem   EntryCategory = "system"
 )

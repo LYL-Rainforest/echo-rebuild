@@ -1,76 +1,54 @@
 package main
 
 import (
+	msgpkg "echo-rebuild/cmd/echo/msg"
+	"echo-rebuild/cmd/echo/pages"
+	"echo-rebuild/internal/scanner"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 type page int
 
 const (
-	pageMainMenu page = iota
-	pageConfigBackup
-	pageConfigRestore
-	pageImageBackup
-	pageImageRestore
+	pgMainMenu page = iota
+	pgConfigBackup
+	pgConfigRestore
 )
 
 type MainModel struct {
 	page    page
-	menu    MainMenuModel
-	configB *ConfigBackupModel
-	configR *ConfigRestoreModel
-	imageB  *ImageBackupModel
-	imageR  *ImageRestoreModel
-	width   int
-	height  int
+	menu    pages.MainMenu
+	configB *pages.ConfigBackup
+	configR *pages.ConfigRestore
 }
 
 func NewMainModel() MainModel {
-	return MainModel{
-		page: pageMainMenu,
-		menu: NewMainMenuModel(),
-	}
+	return MainModel{page: pgMainMenu, menu: pages.NewMainMenu()}
 }
 
-func (m MainModel) Init() tea.Cmd {
-	return nil
-}
+func (m MainModel) Init() tea.Cmd { return nil }
 
-func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
+func (m MainModel) Update(tmsg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := tmsg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
 		return m, nil
 
-	case menuChoice:
+	case msgpkg.MenuChoice:
 		switch msg {
-		case menuImageBackup:
-			ib := NewImageBackupModel(m.width)
-			m.imageB = &ib
-			m.page = pageImageBackup
-			return m, m.imageB.Init()
-
-		case menuImageRestore:
-			ir := NewImageRestoreModel(m.width)
-			m.imageR = &ir
-			m.page = pageImageRestore
-			return m, nil
-		case menuConfigBackup:
-			sc := newScanner()
-			cb := NewConfigBackupModel(sc, m.width)
+		case msgpkg.MenuConfigBackup:
+			cb := pages.NewConfigBackup(scanner.New())
 			m.configB = &cb
-			m.page = pageConfigBackup
+			m.page = pgConfigBackup
 			return m, m.configB.Init()
-		case menuConfigRestore:
-			cr := NewConfigRestoreModel(m.width)
+		case msgpkg.MenuConfigRestore:
+			cr := pages.NewConfigRestore()
 			m.configR = &cr
-			m.page = pageConfigRestore
-			return m, nil
-		case menuExit:
+			m.page = pgConfigRestore
+			return m, m.configR.Init()
+		case msgpkg.MenuExit:
 			return m, tea.Quit
-		default:
-			m.page = pageMainMenu
+		default: // 0 = back to menu
+			m.page = pgMainMenu
 			return m, nil
 		}
 
@@ -83,32 +61,20 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	switch m.page {
-	case pageMainMenu:
-		mm, c := m.menu.Update(msg)
+	case pgMainMenu:
+		mm, c := m.menu.Update(tmsg)
 		m.menu = mm
 		cmd = c
-	case pageConfigBackup:
+	case pgConfigBackup:
 		if m.configB != nil {
-			cb, c := m.configB.Update(msg)
+			cb, c := m.configB.Update(tmsg)
 			m.configB = &cb
 			cmd = c
 		}
-	case pageConfigRestore:
+	case pgConfigRestore:
 		if m.configR != nil {
-			cr, c := m.configR.Update(msg)
+			cr, c := m.configR.Update(tmsg)
 			m.configR = &cr
-			cmd = c
-		}
-	case pageImageBackup:
-		if m.imageB != nil {
-			ib, c := m.imageB.Update(msg)
-			m.imageB = &ib
-			cmd = c
-		}
-	case pageImageRestore:
-		if m.imageR != nil {
-			ir, c := m.imageR.Update(msg)
-			m.imageR = &ir
 			cmd = c
 		}
 	}
@@ -117,23 +83,15 @@ func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m MainModel) View() string {
 	switch m.page {
-	case pageMainMenu:
+	case pgMainMenu:
 		return m.menu.View()
-	case pageConfigBackup:
+	case pgConfigBackup:
 		if m.configB != nil {
 			return m.configB.View()
 		}
-	case pageConfigRestore:
+	case pgConfigRestore:
 		if m.configR != nil {
 			return m.configR.View()
-		}
-	case pageImageBackup:
-		if m.imageB != nil {
-			return m.imageB.View()
-		}
-	case pageImageRestore:
-		if m.imageR != nil {
-			return m.imageR.View()
 		}
 	}
 	return ""

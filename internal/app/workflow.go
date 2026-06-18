@@ -4,12 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 
 	"echo-rebuild/internal/engine"
 	"echo-rebuild/internal/scanner"
 	"echo-rebuild/internal/store"
-	"echo-rebuild/internal/tbi"
 )
 
 type RestoreSummary struct {
@@ -23,11 +23,10 @@ type RestoreSummary struct {
 }
 
 type Workflow struct {
-	db           *sql.DB
-	scanner      scanner.Scanner
-	installer    *engine.Installer
-	pool         *engine.WorkerPool
-	imageManager *tbi.ImageManager
+	db        *sql.DB
+	scanner   scanner.Scanner
+	installer *engine.Installer
+	pool      *engine.WorkerPool
 }
 
 func NewWorkflow(dbPath string) (*Workflow, error) {
@@ -37,11 +36,10 @@ func NewWorkflow(dbPath string) (*Workflow, error) {
 	}
 
 	return &Workflow{
-		db:           db,
-		scanner:      scanner.New(),
-		installer:    engine.NewInstaller(""),
-		pool:         engine.NewPool(0),
-		imageManager: tbi.NewImageManager(),
+		db:        db,
+		scanner:   scanner.New(),
+		installer: engine.NewInstaller(""),
+		pool:      engine.NewPool(0),
 	}, nil
 }
 
@@ -113,6 +111,14 @@ func (w *Workflow) RestoreConfig(ctx context.Context, entries []store.AppEntry, 
 				res.Info = "success"
 			}
 
+		case strings.HasSuffix(entry.ScriptPath, ".reg"):
+			if err := w.installer.RegImport(ctx, entry.ScriptPath); err != nil {
+				res.Err = err
+				res.Info = "skipped"
+			} else {
+				res.Info = "success"
+			}
+
 		default:
 			res.Info = "skipped"
 		}
@@ -127,18 +133,11 @@ func (w *Workflow) RestoreConfig(ctx context.Context, entries []store.AppEntry, 
 		close(jobs)
 	}()
 
+	go w.pool.Wait()
+
 	for res := range results {
 		addResult(res.Info, res.Name)
 	}
 
-	w.pool.Wait()
 	return summary
-}
-
-func (w *Workflow) CaptureImage(ctx context.Context, source, output string, imgType tbi.ImageType, opts tbi.CaptureOptions) error {
-	return w.imageManager.Capture(ctx, source, output, imgType, opts)
-}
-
-func (w *Workflow) RestoreImage(ctx context.Context, image, target string, opts tbi.RestoreOptions) error {
-	return w.imageManager.Restore(ctx, image, target, opts)
 }

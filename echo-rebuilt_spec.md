@@ -1,4 +1,5 @@
 # EchoRebuild — 完整项目规格说明书
+> **⚠ 暂停开发：系统镜像相关章节已标注【不要】，仅保留系统配置备份/还原部分。**
 > 智能体按此文件可直接写出完整项目代码。每个章节说明「写什么」「写到什么程度」「与其他章节如何关联」。
 
 ---
@@ -11,16 +12,16 @@
 |---|------|------|
 | 1 | 创建系统配置 | 扫描本机软件/驱动/系统设置/注册表，生成 `.db` 配置数据库文件 |
 | 2 | 还原系统配置 | 读取 `.db`，选择性跨平台恢复软件配置，并行下载安装，失败降级手动 |
-| 3 | 创建系统镜像 | 对指定磁盘/分区创建物理镜像，支持 raw / tbi / tar.zstd 三种格式 |
-| 4 | 还原系统镜像 | 选择镜像文件 → 选择目标盘 → 修复引导 → 写入
+| ~~3~~ | ~~创建系统镜像~~ | ~~对指定磁盘/分区创建物理镜像~~ 【不要】|
+| ~~4~~ | ~~还原系统镜像~~ | ~~选择镜像文件 → 选择目标盘 → 修复引导 → 写入~~ 【不要】
 
 ## 2. 模块依赖关系图（数据流）
 
 ```
 cmd/echo/         (TUI 层)
   menu.go
-    ├── pages/image_backup/  (7 步向导)
-    ├── pages/image_restore/ (5 步向导)
+    ├── pages/image_backup/  (7 步向导)  【不要】
+    ├── pages/image_restore/ (5 步向导)  【不要】
     ├── pages/progress.go    (进度展示)
     └── pages/result.go      (结果汇总)
             │
@@ -35,7 +36,7 @@ workflow.go ────┬─── scanner.go ──── scanner_windows.go 
                 │       ▼
                 │   store/db.go (读写 SQLite)
                 │
-                └─── tbi/manager.go (raw / tbi / tar.zstd 镜像引擎)
+                └─── tbi/manager.go (raw / tbi / tar.zstd 镜像引擎)  【不要】
 ```
 
 **核心数据实体**：`AppEntry`（定义在 `store/models.go`）是所有模块的通信载体。
@@ -417,7 +418,7 @@ func (inst *Installer) AutoSearchURL(ctx context.Context, name string) ([]string
 
 ---
 
-### 7.7 `internal/tbi/manager.go` ⭐ 系统镜像引擎
+### 7.7 `internal/tbi/manager.go` ⭐ 系统镜像引擎 【不要】
 
 **写什么**：
 - 支持三种镜像格式的系统备份/还原引擎
@@ -523,9 +524,9 @@ func (w *Workflow) BackupConfig(ctx context.Context, entries []store.AppEntry) e
 // 配置恢复：TUI 已选好条目 → 并发安装 → 返回汇总
 func (w *Workflow) RestoreConfig(ctx context.Context, entries []store.AppEntry, restoreBaseDir string) *RestoreSummary
 
-// 系统镜像：委托 ImageManager
-func (w *Workflow) CaptureImage(ctx context.Context, source, output string, imgType ImageType, opts CaptureOptions) error
-func (w *Workflow) RestoreImage(ctx context.Context, image, target string, opts RestoreOptions) error
+// 系统镜像：委托 ImageManager 【不要】
+// func (w *Workflow) CaptureImage(...) error
+// func (w *Workflow) RestoreImage(...) error
 ```
 
 **BackupConfig 实现**：
@@ -585,7 +586,7 @@ return summary
 
 ---
 
-### 7.9 `pkg/embed/assets.go` ⭐ 最后
+### 7.9 `pkg/embed/assets.go` ⭐ 最后 【不要 — 已删除该目录】
 
 **写什么**：
 - 内嵌 TBI 二进制文件
@@ -770,11 +771,10 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 ```
 
 运行后验证：
-1. 启动 → 主菜单显示（创建系统镜像 / 创建系统配置 / 还原系统配置 / 还原系统镜像 + 退出）
-2. 选"创建系统镜像" → 进入 6 步向导（选类型→压缩→分卷→描述→选源盘→确认）
-3. 选"还原系统镜像" → 进入 5 步向导（选文件→显示信息→选目标盘→修复引导→确认）
+1. 启动 → 主菜单显示（创建系统配置 / 还原系统配置 / 退出）
 4. 进度页 → 实时显示进度、速度、用时
 5. 完成页 → 显示结果汇总
+> 【不要】镜像备份/还原向导已从项目中移除
 
 ---
 
@@ -792,18 +792,18 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 
 ```
 主菜单
-├── 1. 创建系统镜像
-│       ├── 选择镜像类型
-│       │    ├── 1. raw — 智能扇区复制
-│       │    ├── 2. tbi — 块级镜像，支持增量/差分
-│       │    └── 3. tar.zstd — 文件级归档，高压缩比
-│       ├── 选择压缩等级 (各工具映射)
-│       ├── 是否启用分卷/差分? [Y/n]
-│       ├── 输入描述 (可选): 自由文本
-│       ├── 选择源磁盘/分区
-│       ├── 输入保存路径: 自由文本/浏览
-│       ├── 确认页: 显示所有参数的摘要
-│       └── 执行 → 进度页 → 完成页 → 返回
+├── ~~1. 创建系统镜像~~ 【不要】
+│       ├── ~~选择镜像类型~~
+│       │    ├── ~~1. raw — 智能扇区复制~~
+│       │    ├── ~~2. tbi — 块级镜像，支持增量/差分~~
+│       │    └── ~~3. tar.zstd — 文件级归档，高压缩比~~
+│       ├── ~~选择压缩等级 (各工具映射)~~
+│       ├── ~~是否启用分卷/差分? [Y/n]~~
+│       ├── ~~输入描述 (可选): 自由文本~~
+│       ├── ~~选择源磁盘/分区~~
+│       ├── ~~输入保存路径: 自由文本/浏览~~
+│       ├── ~~确认页: 显示所有参数的摘要~~
+│       └── ~~执行 → 进度页 → 完成页 → 返回~~
 │
 ├── 2. 创建系统配置
 │       ├── 扫描系统 (自动，显示进度)
@@ -822,18 +822,18 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 │       ├── [Enter] 确认恢复项 → 确认页
 │       └── 执行 → 进度页 → 结果汇总 → 返回
 │
-└── 4. 还原系统镜像
-        ├── 选择镜像文件 (输入路径或浏览)
-        ├── 显示镜像信息 (类型/大小/描述/创建时间)
-        ├── 选择目标磁盘/分区
-        │    └── 列出所有可用磁盘 (列表选择)
-        ├── 是否修复引导分区?
-        │    ├── 1. 自动修复 (推荐)
-        │    ├── 2. 手动指定引导分区 → 选择分区
-        │    └── 3. 不修复
-        ├── 什么是引导分区? → 展开说明弹窗 (按?查看)
-        ├── 确认还原 → 确认页 (显示源/目标/选项)
-        └── 执行 → 进度页 → 完成页 → 返回
+└── ~~4. 还原系统镜像~~ 【不要】
+        ├── ~~选择镜像文件 (输入路径或浏览)~~
+        ├── ~~显示镜像信息 (类型/大小/描述/创建时间)~~
+        ├── ~~选择目标磁盘/分区~~
+        │    └── ~~列出所有可用磁盘 (列表选择)~~
+        ├── ~~是否修复引导分区?~~
+        │    ├── ~~1. 自动修复 (推荐)~~
+        │    ├── ~~2. 手动指定引导分区 → 选择分区~~
+        │    └── ~~3. 不修复~~
+        ├── ~~什么是引导分区? → 展开说明弹窗 (按?查看)~~
+        ├── ~~确认还原 → 确认页 (显示源/目标/选项)~~
+        └── ~~执行 → 进度页 → 完成页 → 返回~~
 ```
 
 ### 10.3 主菜单（首页）

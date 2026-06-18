@@ -59,6 +59,11 @@ func (p *WorkerPool) Start(ctx context.Context, handler func(context.Context, an
 		go workerFn()
 	}
 
+	go func() {
+		p.wg.Wait()
+		close(results)
+	}()
+
 	return jobs, results
 }
 

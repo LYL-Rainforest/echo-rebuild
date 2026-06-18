@@ -1,21 +1,14 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/bash
+set -e
 
-PLATFORMS=(
-  "windows/amd64"
-  "linux/amd64"
-  "darwin/amd64"
-)
+mkdir -p build
 
-for pair in "${PLATFORMS[@]}"; do
-  GOOS="${pair%/*}"
-  GOARCH="${pair#*/}"
-  output="build/echo-rebuild-$GOOS-$GOARCH"
-  if [ "$GOOS" = "windows" ]; then
-    output="$output.exe"
-  fi
-  echo "Building $output ..."
-  CGO_ENABLED=1 GOOS="$GOOS" GOARCH="$GOARCH" go build -o "$output" ./cmd/echo/
+platforms=("windows/amd64" "linux/amd64" "darwin/amd64")
+
+for p in "${platforms[@]}"; do
+    IFS="/" read -r GOOS GOARCH <<< "$p"
+    echo "Building $GOOS/$GOARCH..."
+    CGO_ENABLED=1 GOOS=$GOOS GOARCH=$GOARCH go build -o "build/echo-rebuild-${GOOS}-${GOARCH}" ./cmd/echo/
 done
 
 echo "All builds complete."

@@ -355,15 +355,14 @@ func parseSearchResults(r io.Reader) ([]string, error) {
 
 	var urls []string
 	seen := map[string]bool{}
-	// crude HTML link extraction
-	for i := 0; i < len(body)-8; i++ {
-		if body[i:i+9] == `href="htt` {
-			j := i + 9
-			end := strings.IndexByte(body[j:], '"')
+	for i := 0; i < len(body)-9; i++ {
+		if (body[i:i+9] == `href="htt` || body[i:i+9] == `href="HTT`) && i+6 < len(body) {
+			start := i + 6 // after `href="`
+			end := strings.IndexByte(body[start:], '"')
 			if end < 0 {
 				continue
 			}
-			u := body[j : j+end]
+			u := body[start : start+end]
 			// deduplicate, skip ads
 			if !seen[u] && !strings.Contains(u, "duckduckgo") && !strings.Contains(u, "googleadservices") {
 				seen[u] = true
@@ -375,4 +374,18 @@ func parseSearchResults(r io.Reader) ([]string, error) {
 		urls = urls[:5]
 	}
 	return urls, nil
+}
+
+// RegImport imports a .reg file into the Windows registry.
+// Only supported on Windows; other platforms return nil.
+func (inst *Installer) RegImport(ctx context.Context, regPath string) error {
+	if runtime.GOOS != "windows" {
+		return nil
+	}
+	cmd := exec.CommandContext(ctx, "reg", "import", regPath)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("reg import %s: %s: %s", regPath, err, string(output))
+	}
+	return nil
 }

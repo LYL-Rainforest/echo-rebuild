@@ -7,6 +7,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
+// CloseDB is an alias for db.Close() matching the spec API.
+func CloseDB(db *sql.DB) error {
+	return db.Close()
+}
+
 const createTableSQL = `
 CREATE TABLE IF NOT EXISTS entries (
     name         TEXT PRIMARY KEY,
