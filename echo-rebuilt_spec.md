@@ -197,10 +197,13 @@ func (w *Workflow) BackupConfig(ctx context.Context, entries []store.AppEntry) e
 func (w *Workflow) RestoreConfig(ctx context.Context, entries []store.AppEntry, restoreBaseDir string) *RestoreSummary
 
 type RestoreSummary struct {
-    Success  int
-    Manual   int  // 压缩包，已打开路径
-    Fallback int  // URL 下载失败，已打开浏览器
-    Skipped  int  // 无来源
+    Success     int      // 成功安装
+    Manual      int      // 压缩包，已打开路径
+    ManualNames []string // 需要手动操作的条目名称列表
+    Fallback    int      // URL 下载失败，已打开浏览器
+    FallbackNames []string
+    Skipped     int      // 无来源
+    SkippedNames []string
 }
 ```
 
@@ -238,12 +241,14 @@ func InitDB(path string) (*sql.DB, error)
 func SaveEntries(db *sql.DB, entries []AppEntry) error     // 事务批量 INSERT OR REPLACE
 func LoadEntries(db *sql.DB, platform string) ([]AppEntry, error) // platform="" 返回全部
 func DeleteEntry(db *sql.DB, name string) error
+func CloseDB(db *sql.DB) error
 ```
 
 **实现要求**：
 - `InitDB` 调用 `sql.Open("sqlite3", path)`，执行 CREATE TABLE
 - `SaveEntries` 用 `BEGIN` + `PREPARE` + 循环执行 + `COMMIT`
 - `LoadEntries` 支持 WHERE platform IN ("", $1) 过滤
+- `CloseDB` 调用 db.Close()
 - 所有函数使用 `context.Background()` 或从参数传入
 
 **关联**：`workflow.go` BackupConfig / RestoreConfig 均调用此包。TUI 页面在还原时也直接调用 LoadEntries。
@@ -293,11 +298,14 @@ func (s *windowsScanner) Scan(ctx context.Context, _ ScanOptions) ([]store.AppEn
 1. 打开注册表 `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall`
 2. 枚举子项，读取 DisplayName、InstallLocation、Publisher
 3. 对每个有效的 DisplayName 构造 AppEntry：
-   - Name = DisplayName
-   - ConfigPath = InstallLocation + "\\" + 常见配置目录
+   - Name = `"[软件] " + DisplayName`（前缀 `[软件]` 使分类树能区分）
    - Platform = "windows"
-   - PackagePath 留空（用户可在备份树中手动设置）
-4. 扫描驱动：`powershell Get-WmiObject Win32_PnPSignedDriver` → Name + DriverPath
+   - 其他字段留空（用户可在备份树中手动设置）
+4. 系统设置导出：执行 `reg export HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment` 等，
+   生成 .reg 临时文件，构造 AppEntry：
+   - Name = `"[系统设置] " + 设置项名称`（如 `[系统设置] 当前用户环境变量`）
+   - Platform = "windows"
+   - 其他字段留空
 
 **Unix 扫描逻辑**：
 1. Linux：解析 `/var/lib/dpkg/status` 或执行 `dpkg-query -W -f '${Package}\t${Version}\n'`
@@ -319,24 +327,27 @@ func (s *windowsScanner) Scan(ctx context.Context, _ ScanOptions) ([]store.AppEn
 
 **函数签名**：
 ```go
-type Job[T any] struct {
-    Data T
+type Job struct {
+    Data any
 }
 
-type Result[T any] struct {
-    Job  Job[T]
+type Result struct {
+    Job  Job
     Err  error
-    Info string  // 如 "manual", "fallback", "skipped"
+    Info string  // "success" / "manual" / "fallback" / "skipped"
+    Name string  // entry name for tracking
 }
 
 type WorkerPool struct {
     workers int
+    wg      sync.WaitGroup
+    cancel  context.CancelFunc
 }
 
 func NewPool(n int) *WorkerPool
 
 // Start 返回一个 send-only jobs channel 和一个 receive-only results channel
-func (p *WorkerPool) Start[T any](ctx context.Context) (chan<- Job[T], <-chan Result[T])
+func (p *WorkerPool) Start(ctx context.Context, handler func(context.Context, any) Result) (chan<- Job, <-chan Result)
 
 // Wait 阻塞直到所有 worker 退出
 func (p *WorkerPool) Wait()
@@ -357,6 +368,7 @@ func (p *WorkerPool) Wait()
 
 **写什么**：
 - 安装引擎，按软件类型走不同处理路径
+- URL 搜索：根据软件名称自动搜索官方下载地址
 
 **函数签名**：
 ```go
@@ -377,6 +389,9 @@ func (inst *Installer) OpenArchive(entry store.AppEntry, restoreBaseDir string) 
 
 // OpenURL — 打开浏览器让用户手动下载
 func (inst *Installer) OpenURL(entry store.AppEntry) error
+
+// AutoSearchURL — 根据软件名称搜索官方下载地址，返回 URL 列表
+func (inst *Installer) AutoSearchURL(ctx context.Context, name string) ([]string, error)
 ```
 
 **实现要求**：
@@ -394,6 +409,11 @@ func (inst *Installer) OpenURL(entry store.AppEntry) error
   - Windows：`cmd /c start {url}`
   - Darwin：`open {url}`
   - Linux：`xdg-open {url}`
+- `AutoSearchURL`：
+  - 使用搜索引擎 API（如 DuckDuckGo 或 Google Custom Search）搜索 `"{软件名} 官方下载"` 或 `"{software name} official download"`
+  - 返回结果前 5 个 URL
+  - 超时 10 秒
+  - 失败返回空列表 + error（TUI 层降级为手动输入）
 
 ---
 
@@ -484,18 +504,18 @@ func (m *ImageManager) ListDevices(ctx context.Context) ([]DeviceInfo, error)
 
 **写什么**：
 - Workflow 编排器，按 TUI 传参直接调下层模块，不做交互决策
+- 四大核心工作流的完整实现
 
 **函数签名**：
 ```go
 type Workflow struct {
-    db           *sql.DB
-    scanner      scanner.Scanner
-    installer    *Installer    // 来自 engine 包
-    pool         *WorkerPool   // 来自 engine 包
-    imageManager *ImageManager // 来自 tbi 包
+    db     *sql.DB
+    dbPath string
 }
 
 func NewWorkflow(dbPath string) (*Workflow, error)
+func (w *Workflow) DB() *sql.DB
+func (w *Workflow) Close() error
 
 // 配置备份：TUI 已选好条目 → 直接存库
 func (w *Workflow) BackupConfig(ctx context.Context, entries []store.AppEntry) error
@@ -508,24 +528,60 @@ func (w *Workflow) CaptureImage(ctx context.Context, source, output string, imgT
 func (w *Workflow) RestoreImage(ctx context.Context, image, target string, opts RestoreOptions) error
 ```
 
-**RestoreConfig 实现逻辑**：
+**BackupConfig 实现**：
 ```go
-for each entry in entries:
-    pool.Submit(entry)
-
-in each worker:
-    switch:
-        entry.IsArchive == true          → Installer.OpenArchive()    → result manual
-        entry.PackagePath != ""          → Installer.CopyPortable()  → result success
-        entry.DownloadURL != ""          → Installer.DownloadAndRun()
-            success                      → result success
-            fail                         → Installer.OpenURL()      → result fallback
-        else                             → result skipped
-
-collect results → return RestoreSummary
+// 调用 store.SaveEntries(db, entries)，事务写入
+// 成功返回 nil，失败回滚并返回 error
 ```
 
-**关联**：TUI 页面唯一调用此包。
+**RestoreConfig 实现**：
+```go
+pool := NewPool(runtime.NumCPU())
+ctx, cancel := context.WithCancel(ctx)
+defer cancel()
+jobs, results := pool.Start[store.AppEntry](ctx)
+
+go func() {
+    defer close(jobs)
+    for _, entry := range entries {
+        jobs <- Job[store.AppEntry]{Data: entry}
+    }
+}()
+
+summary := &RestoreSummary{}
+for result := range results {
+    entry := result.Job.Data
+    switch {
+    case entry.IsArchive:
+        Installer.OpenArchive(entry, restoreBaseDir)
+        summary.Manual++
+        summary.ManualNames = append(summary.ManualNames, entry.Name)
+    case entry.PackagePath != "":
+        Installer.CopyPortable(ctx, entry, restoreBaseDir)
+        summary.Success++
+    case entry.DownloadURL != "":
+        err := Installer.DownloadAndRun(ctx, entry)
+        if err != nil {
+            Installer.OpenURL(entry)
+            summary.Fallback++
+            summary.FallbackNames = append(summary.FallbackNames, entry.Name)
+        } else {
+            summary.Success++
+        }
+    default:
+        summary.Skipped++
+        summary.SkippedNames = append(summary.SkippedNames, entry.Name)
+    }
+}
+pool.Wait()
+return summary
+```
+
+**CaptureImage / RestoreImage 实现**：
+- 直接调用 `tbi.NewImageManager().Capture()` / `.Restore()`
+- 透传参数，不做额外处理
+
+**关联**：TUI 所有页面（pages_*.go）均调用此包的函数。
 
 ---
 
@@ -551,19 +607,50 @@ var Assets embed.FS
 
 **写什么**：
 - TUI（终端交互界面）入口，启动 bubbletea 程序
-- 主菜单 → 子菜单 → 功能调用（workflow）
+- 主 Model 状态机：根据 `page` 枚举值分发到各子页面
 - 不解析 CLI flags（所有参数通过菜单交互提供）
 
 **函数签名**：
 ```go
-func main()
+type page int
+const (
+    pageMainMenu page = iota
+    pageConfigBackup
+    pageConfigRestore
+    pageImageBackup
+    pageImageRestore
+)
+
+type MainModel struct {
+    page    page
+    menu    MainMenuModel
+    configB *ConfigBackupModel
+    configR *ConfigRestoreModel
+    imageB  *ImageBackupModel
+    imageR  *ImageRestoreModel
+    width   int
+    height  int
+}
+
+func NewMainModel() MainModel  // 初始 page = pageMainMenu
+func (m MainModel) Init() tea.Cmd
+func (m MainModel) Update(msg tea.Msg) (tea.Model, tea.Cmd)
+func (m MainModel) View() string
 ```
 
 **实现要求**：
-- `main()` 直接启动 bubbletea `program.Run()`
-- 初始 Model 为主菜单
-- 所有页面（主菜单、恢复模式选择、条目勾选表格、结果页）均为 bubbletea Model
-- 数据库路径、过滤条件等通过弹窗/输入框交互获取，不要命令行 flag
+- `main()` 直接启动 bubbletea `program.Run()`，使用 `tea.WithAltScreen()`
+- Update 中按 `m.page` 路由到对应子 Model 的 Update，并更新引用
+- 子 Model 通过返回 `menuChoice` msg 通知主 Model 切换页面
+- 子 Model 返回 `menuChoice(0)` = 返回主菜单
+- 所有页面数据流：
+  ```
+  menuChoice msg → 主 Model 创建子 Model →
+  子 Model 调用 workflow 函数 →
+  子 Model 返回结果 msg →
+  子 Model 显示完成页 →
+  用户按 Enter → 返回 menuChoice(0) → 主菜单
+  ```
 
 **关联**：唯一调用 `workflow.go` 的包，也是编译入口点。所有界面元素引用第 10 节的 TUI 设计。
 
@@ -721,9 +808,8 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 ├── 2. 创建系统配置
 │       ├── 扫描系统 (自动，显示进度)
 │       ├── 配置分类树 (三级导航)
-│       │    ├── 软件 (平铺列表，按 p 设安装来源)
 │       │    ├── 系统设置 (→展开子项勾选)
-│       │    └── 电脑驱动 (→展开子项勾选)
+│       │    └── 软件 (平铺列表，按 p 设安装来源)
 │       ├── 逐一设置安装来源 (URL / 免安装目录 / 压缩包)
 │       ├── [Enter] 确认 → workflow.BackupConfig()
 │       └── 完成页 → 返回
@@ -731,10 +817,8 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 ├── 3. 还原系统配置
 │       ├── 选择 .db 文件 (输入路径/最近文件)
 │       ├── 解析并展示分类树 (默认全选)
-│       │    ├── 软件 (平铺列表)
 │       │    ├── 系统设置 (→展开子项取消勾选)
-│       │    └── 电脑驱动 (→展开子项取消勾选)
-│       │         └── … (自动归类)
+│       │    └── 软件 (平铺列表)
 │       ├── [Enter] 确认恢复项 → 确认页
 │       └── 执行 → 进度页 → 结果汇总 → 返回
 │
@@ -1095,14 +1179,13 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 ```
  创建系统配置 — 选择要备份的内容             ↑↓移动  →展开  Space选择  Enter保存
 ┌────────────────────────────────────────────────────┐
-│ [✓] 软件                              (10 项)    │
 │ [✓] 系统设置                                       │
-│ [ ] 电脑驱动                                       │
+│ [✓] 软件                              (10 项)    │
 └────────────────────────────────────────────────────┘
-  已选: 2/3 大类
+  已选: 2/2 大类
 ```
 
-**展开软件**（按→，平铺列表，无子分类）：
+**展开软件**（按→）：
 
 ```
  软件                                ← 按←返回上一级
@@ -1158,11 +1241,18 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 
 选 **1 (URL)**：
 
+自动根据软件名称搜索官方下载页面（通过搜索引擎 API 或内置映射表）。用户可确认或修改搜索到的 URL：
+
 ```
-  输入下载地址:
-  > https://example.com/greentool.zip
-  Enter确认
+   正在搜索 Firefox 官方下载地址...
+   ✓ 已找到: https://www.mozilla.org/firefox/download/
+
+   1. 确认使用此地址
+   2. 修改地址
+   0. 取消
 ```
+
+选 2 修改则弹出输入框（同 §10.10 输入框组件规范），允许手动输入 URL。
 
 选 **2 (免安装目录)**：
 
@@ -1195,25 +1285,25 @@ $env:CGO_ENABLED="1"; $env:GOOS="darwin"; $env:GOARCH="amd64"; go build -o build
 └──────┴─────────────────────────┴────────────────────────┘
 ```
 
-- 所有软件默认无来源，需用户逐个手动设置
-- 扫描器只填充 Name 和 Platform，其余字段全由用户填写
-- 设置过的条目底部汇总显示：`N 项已设置来源, M 项未设置`
+- 所有软件默认来源类型为 **URL**，扫描时自动搜索官方下载地址（§10.8.5）
+- 用户可按 `p` 将特定条目改为「免安装目录」或「压缩包」
+- 系统设置条目无来源概念
+- 汇总显示：`N 项 (URL: X  免安装: Y  压缩包: Z)`
 
 #### 10.8.6 确定保存
 
 ```
-  即将备份以下内容:
-    软件        — 10 项 (设来源: 3 URL + 2 免安装 + 1 压缩包 | 未设: 4)
-    系统设置    — 4 项
-    电脑驱动    — 3 项
-  ─────────────────────
-  文件名 (可在预设基础上修改):
-  > conf_backup_20240617_143022
+   即将备份以下内容:
+     软件        — 10 项 (URL: 7  免安装: 2  压缩包: 1)
+     系统设置    — 4 项
+   ─────────────────────
+   文件名 (可在预设基础上修改):
+   > conf_backup_20240617_143022
 
-  保存到: /backups/conf_backup_20240617_143022.db
+   保存到: /backups/conf_backup_20240617_143022.db
 
-  1. 确认保存
-  0. 返回修改
+   1. 确认保存
+   0. 返回修改
 ```
 
 ---
@@ -1255,11 +1345,10 @@ Enter → 确认恢复项 → 并行执行 → 进度页 → 结果汇总
 ```
  还原系统配置 — 选择要恢复的内容            ↑↓移动  →展开  Space取消  Enter恢复
 ┌────────────────────────────────────────────────────┐
-│ [✓] 软件                               6/10 项   │
 │ [✓] 系统设置                            4/4 项    │
-│ [ ] 电脑驱动                            0/3 项    │
+│ [✓] 软件                               6/10 项   │
 └────────────────────────────────────────────────────┘
-  已选: 10/17 项  |  按→展开细调  Enter开始恢复
+  已选: 10/14 项  |  按→展开细调  Enter开始恢复
 ```
 
 展开某分类后操作与备份完全一致。
@@ -1268,18 +1357,33 @@ Enter → 确认恢复项 → 并行执行 → 进度页 → 结果汇总
 
 确认后进入进度页（同 10.6），显示每项的安装进度，完成后跳转结果汇总页。
 
+**结果汇总示例**：
+```
+操作完成 — 结果汇总
+
+  ✓ 9 项成功
+  ⚠ 2 项需手动操作:
+       - 7-Zip (压缩包，路径已打开)
+       - PortableApp (压缩包，路径已打开)
+  ⚠ 1 项已回退到浏览器:
+       - Docker Desktop (下载失败)
+
+  Enter 返回
+```
+
 ### 10.10 交互通用规则
 
 | 场景 | 行为 |
 |------|------|
 | 菜单页 | 按数字键选择，Enter 无效 |
-| 输入框 | 自由文本输入，Enter 提交，Esc 取消 |
+| 输入框 | 使用 `bubbletea/textinput` 组件，显示闪烁光标 `_`，Enter 提交，Esc 取消。所有路径输入框支持终端拖拽文件（Windows 终端拖入文件自动填入完整路径） |
 | 确认页 | 1=确认，0=返回，其他键无反应 |
 | 进度页 | 实时刷新，Esc 可取消 |
 | 错误页 | 显示错误信息，Enter 返回 |
 | 所有列表 | 0 始终在最顶上，表示返回 |
-| 分类树（←→ Space） | → 展开子级，← 返回上级，Space 切换选中 |
+| 分类树（←→ Space） | → 展开子级，← 返回上级，Space 切换选中。系统设置始终在软件之上 |
 | 软件列表（p） | 在软件条目上按 p，进入安装来源设置（URL/免安装/压缩包） |
+| 结果汇总 | 除统计数字外，单独列出所有需要手动操作的条目名称 |
 | 全局 | Esc 始终等同于"取消/返回"，不会意外退出程序 |
 
 ### 10.11 TUI 代码结构（`cmd/echo/` 目录内）
@@ -1333,3 +1437,18 @@ type pageModel interface {
 
 主 Model 的 Update 中根据当前 `pageState` 枚举值路由到对应子 Model。
 共享组件（磁盘列表、输入框、进度条）抽取到 `shared/` 目录复用。
+
+**`shared/input.go` (输入框组件)**：
+- 封装 `bubbletea/textinput`，统一所有输入场景：
+  - `NewInput(placeholder, prompt string, width int) InputModel`
+  - `SetValue(v string)` — 外部设置初始值
+  - `Value() string` — 获取当前值
+  - 支持自定义验证函数 `func(string) error`
+- 拖拽文件支持：Windows 终端拖入文件时自动填入路径（监听 terminal paste event）
+- 使用方式：
+  ```go
+  input := NewInput("输入路径...", "> ", 40)
+  // 在 View() 中: input.View()
+  // 在 Update() 中: input, cmd = input.Update(msg)
+  // 提交: input.Value() != "" 且 msg 为 Enter 时确认
+  ```

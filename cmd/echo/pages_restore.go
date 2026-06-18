@@ -179,6 +179,29 @@ func (m ConfigRestoreModel) View() string {
 			b.WriteString(errorStyle.Render("  ✗ " + m.errMsg) + "\n")
 		} else {
 			b.WriteString(successStyle.Render("  ✓ "+m.statusMsg) + "\n")
+			if m.summary != nil {
+				if len(m.summary.ManualNames) > 0 {
+					b.WriteString("\n")
+					b.WriteString("  ⚠ 需手动操作:\n")
+					for _, name := range m.summary.ManualNames {
+						b.WriteString(fmt.Sprintf("       - %s\n", name))
+					}
+				}
+				if len(m.summary.FallbackNames) > 0 {
+					b.WriteString("\n")
+					b.WriteString("  ⚠ 已回退到浏览器:\n")
+					for _, name := range m.summary.FallbackNames {
+						b.WriteString(fmt.Sprintf("       - %s\n", name))
+					}
+				}
+				if len(m.summary.SkippedNames) > 0 {
+					b.WriteString("\n")
+					b.WriteString("  - 已跳过:\n")
+					for _, name := range m.summary.SkippedNames {
+						b.WriteString(fmt.Sprintf("       - %s\n", name))
+					}
+				}
+			}
 		}
 		b.WriteString(helpStyle.Render("  Enter 返回") + "\n")
 	}

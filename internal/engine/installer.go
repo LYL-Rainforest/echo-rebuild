@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"echo-rebuild/internal/store"
 )
@@ -76,6 +78,29 @@ func (inst *Installer) OpenURL(entry store.AppEntry) error {
 		return fmt.Errorf("no URL")
 	}
 	return openBrowser(entry.DownloadURL)
+}
+
+// AutoSearchURL searches for official download URL by software name.
+func (inst *Installer) AutoSearchURL(ctx context.Context, name string) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	query := url.QueryEscape(name + " official download")
+	searchURL := fmt.Sprintf("https://html.duckduckgo.com/html/?q=%s", query)
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, searchURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	return parseSearchResults(resp.Body)
 }
 
 func (inst *Installer) downloadFile(ctx context.Context, url string) (string, error) {
@@ -319,4 +344,35 @@ func openBrowser(url string) error {
 	default:
 		return exec.Command("xdg-open", url).Start()
 	}
+}
+
+func parseSearchResults(r io.Reader) ([]string, error) {
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	body := string(data)
+
+	var urls []string
+	seen := map[string]bool{}
+	// crude HTML link extraction
+	for i := 0; i < len(body)-8; i++ {
+		if body[i:i+9] == `href="htt` {
+			j := i + 9
+			end := strings.IndexByte(body[j:], '"')
+			if end < 0 {
+				continue
+			}
+			u := body[j : j+end]
+			// deduplicate, skip ads
+			if !seen[u] && !strings.Contains(u, "duckduckgo") && !strings.Contains(u, "googleadservices") {
+				seen[u] = true
+				urls = append(urls, u)
+			}
+		}
+	}
+	if len(urls) > 5 {
+		urls = urls[:5]
+	}
+	return urls, nil
 }

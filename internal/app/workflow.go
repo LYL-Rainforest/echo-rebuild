@@ -13,10 +13,13 @@ import (
 )
 
 type RestoreSummary struct {
-	Success  int
-	Manual   int
-	Fallback int
-	Skipped  int
+	Success       int
+	Manual        int
+	ManualNames   []string
+	Fallback      int
+	FallbackNames []string
+	Skipped       int
+	SkippedNames  []string
 }
 
 type Workflow struct {
@@ -61,7 +64,7 @@ func (w *Workflow) RestoreConfig(ctx context.Context, entries []store.AppEntry, 
 	summary := &RestoreSummary{}
 	var mu sync.Mutex
 
-	addResult := func(info string) {
+	addResult := func(info string, name string) {
 		mu.Lock()
 		defer mu.Unlock()
 		switch info {
@@ -69,16 +72,19 @@ func (w *Workflow) RestoreConfig(ctx context.Context, entries []store.AppEntry, 
 			summary.Success++
 		case "manual":
 			summary.Manual++
+			summary.ManualNames = append(summary.ManualNames, name)
 		case "fallback":
 			summary.Fallback++
+			summary.FallbackNames = append(summary.FallbackNames, name)
 		default:
 			summary.Skipped++
+			summary.SkippedNames = append(summary.SkippedNames, name)
 		}
 	}
 
 	jobs, results := w.pool.Start(ctx, func(ctx context.Context, data any) engine.Result {
 		entry := data.(store.AppEntry)
-		res := engine.Result{}
+		res := engine.Result{Name: entry.Name}
 
 		switch {
 		case entry.IsArchive:
@@ -122,7 +128,7 @@ func (w *Workflow) RestoreConfig(ctx context.Context, entries []store.AppEntry, 
 	}()
 
 	for res := range results {
-		addResult(res.Info)
+		addResult(res.Info, res.Name)
 	}
 
 	w.pool.Wait()

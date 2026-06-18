@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"echo-rebuild/internal/app"
+	"echo-rebuild/internal/engine"
 	"echo-rebuild/internal/scanner"
 	"echo-rebuild/internal/store"
 	tea "github.com/charmbracelet/bubbletea"
@@ -18,6 +19,7 @@ const (
 	cbScan configBackupStep = iota
 	cbTree
 	cbSourceType
+	cbSearchURL
 	cbSourceInput
 	cbConfirm
 	cbDone
@@ -33,6 +35,8 @@ type ConfigBackupModel struct {
 	cursorLeaf  *TreeNode
 	sourceStep  int
 	sourceInput string
+	searchURLs  []string
+	searchCur   int
 	statusMsg   string
 	errMsg      string
 }
@@ -88,6 +92,17 @@ func (m ConfigBackupModel) Update(msg tea.Msg) (ConfigBackupModel, tea.Cmd) {
 		m.step = cbDone
 		return m, nil
 
+	case searchDoneMsg:
+		if msg.err != nil || len(msg.urls) == 0 {
+			m.sourceStep = 1
+			m.sourceInput = ""
+			m.step = cbSourceInput
+		} else {
+			m.searchURLs = msg.urls
+			m.searchCur = 0
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		switch m.step {
 		case cbTree:
@@ -120,9 +135,20 @@ func (m ConfigBackupModel) Update(msg tea.Msg) (ConfigBackupModel, tea.Cmd) {
 		case cbSourceType:
 			switch msg.String() {
 			case "1":
-				m.sourceStep = 1
-				m.sourceInput = ""
-				m.step = cbSourceInput
+				if m.cursorLeaf != nil && m.cursorLeaf.Entry != nil {
+					m.step = cbSearchURL
+					m.searchURLs = nil
+					m.searchCur = 0
+					softwareName := m.cursorLeaf.Entry.Name
+					return m, func() tea.Msg {
+						inst := engine.NewInstaller("")
+						urls, err := inst.AutoSearchURL(context.Background(), softwareName)
+						if err != nil {
+							return searchDoneMsg{urls: nil, err: err}
+						}
+						return searchDoneMsg{urls: urls}
+					}
+				}
 			case "2":
 				m.sourceStep = 2
 				m.sourceInput = ""
@@ -133,6 +159,32 @@ func (m ConfigBackupModel) Update(msg tea.Msg) (ConfigBackupModel, tea.Cmd) {
 				m.step = cbSourceInput
 			case "0", "esc":
 				m.step = cbTree
+			}
+			return m, nil
+
+		case cbSearchURL:
+			switch msg.String() {
+			case "1":
+				if len(m.searchURLs) > 0 {
+					if m.cursorLeaf != nil && m.cursorLeaf.Entry != nil {
+						m.cursorLeaf.Entry.SourceType = "url"
+						m.cursorLeaf.Entry.SourceValue = m.searchURLs[m.searchCur]
+					}
+					m.step = cbTree
+				}
+			case "2":
+				m.sourceStep = 1
+				m.sourceInput = ""
+				m.step = cbSourceInput
+			case "0", "esc":
+				m.step = cbTree
+			default:
+				if len(msg.String()) == 1 && msg.String()[0] >= '0' && msg.String()[0] <= '9' {
+					idx := int(msg.String()[0] - '0')
+					if idx > 0 && idx <= len(m.searchURLs) {
+						m.searchCur = idx - 1
+					}
+				}
 			}
 			return m, nil
 
@@ -248,6 +300,11 @@ type saveDoneMsg struct {
 	err   error
 }
 
+type searchDoneMsg struct {
+	urls []string
+	err  error
+}
+
 func (m ConfigBackupModel) View() string {
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("创建系统配置") + "\n\n")
@@ -268,6 +325,26 @@ func (m ConfigBackupModel) View() string {
 		b.WriteString("  2. 免安装目录 — 复制文件夹 + 桌面快捷方式\n")
 		b.WriteString("  3. 压缩包 — 打开路径让用户手动处理\n")
 		b.WriteString("  0. 取消\n")
+
+	case cbSearchURL:
+		b.WriteString("正在搜索下载地址...\n\n")
+		if len(m.searchURLs) > 0 {
+			b.WriteString(fmt.Sprintf("  找到 %d 个结果:\n\n", len(m.searchURLs)))
+			for i, u := range m.searchURLs {
+				cur := " "
+				if i == m.searchCur {
+					cur = ">"
+				}
+				b.WriteString(fmt.Sprintf("  %s %d. %s\n", cur, i+1, u))
+			}
+			b.WriteString("\n")
+			b.WriteString("  1. 确认使用当前选中\n")
+			b.WriteString("  2. 手动输入地址\n")
+			b.WriteString("  0. 取消\n")
+		} else {
+			b.WriteString("  (搜索结果为空，降级为手动输入)\n")
+			b.WriteString(helpStyle.Render("  Enter 手动输入  Esc 取消") + "\n")
+		}
 
 	case cbSourceInput:
 		label := "输入下载地址:"

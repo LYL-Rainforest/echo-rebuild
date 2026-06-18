@@ -14,6 +14,7 @@ type Result struct {
 	Job  Job
 	Err  error
 	Info string
+	Name string
 }
 
 type WorkerPool struct {
